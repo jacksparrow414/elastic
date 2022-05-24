@@ -5,3 +5,4 @@ server:
 logging:
   level:
     org.elasticsearch: debug
+    tracer: trace
