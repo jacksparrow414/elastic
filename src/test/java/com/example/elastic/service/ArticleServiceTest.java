@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import lombok.SneakyThrows;
+import net.bytebuddy.utility.RandomString;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +27,8 @@ public class ArticleServiceTest {
     public void assertIndexArticle() {
         Article article = new Article();
         article.setCreateTime(LocalDateTime.now());
-        article.setArticleContent("This ARTICLE ahhah");
-        article.setAuthor("oop");
+        article.setArticleContent(RandomString.make(10));
+        article.setAuthor(RandomString.make(5));
         ObjectMapper objectMapper = new ObjectMapper();
         System.out.println(objectMapper.writeValueAsString(article));
         String articleId = articleService.indexArticle(article);
