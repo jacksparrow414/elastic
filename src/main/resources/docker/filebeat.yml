@@ -1,0 +1,101 @@
+filebeat.inputs:
+  - type: filestream
+    id: access-log
+    paths:
+     - /usr/log/access_log.txt
+processors:
+  - dissect:
+      tokenizer: '%{client.ip} - - [%{access_timestamp}] %{response_time|integer} %{session_id} "%{http.request.method} %{url_original} %{http.version}" %{http.response.status_code|integer} %{http.response.bytes} "%{http.request.referrer}" "%{user_agent.original}"'
+      field: "message"
+      target_prefix: ""
+      ignore_failure: false
+  - if:
+      contains:
+        url_original: '?'
+    then:
+      - dissect:
+          tokenizer: '%{path}?%{query}'
+          field: "url_original"
+          target_prefix: "url"
+    else:
+      - copy_fields:
+          fields:
+            - from: url_original
+              to: url.path
+          fail_on_error: false
+          ignore_missing: true
+  - timestamp:
+      field: "access_timestamp"
+      layouts:
+        - '2006-01-02T15:04:05Z'
+        - '2006-01-02T15:04:05.999Z'
+        - '2006-01-02T15:04:05.999-07:00'
+      test:
+        - '2019-06-22T16:33:51Z'
+        - '2019-11-18T04:59:51.123Z'
+        - '2020-08-03T07:10:20.123456+02:00'
+  - drop_fields:
+      fields: [ "agent","log","cloud","event","message","log.file.path","access_timestamp","input","url_original","host" ]
+      ignore_missing: true
+  - add_tags:
+      when:
+        network:
+          client.ip: [ private, loopback ]
+      tags: [ "private internets" ]
+  - replace:
+      when:
+        contains:
+          http.response.bytes: "-"
+      fields:
+        - field: "http.response.bytes"
+          pattern: "-"
+          replacement: "0"
+      ignore_missing: true
+  - convert:
+      fields:
+        - { from: "http.response.bytes", type: "integer" }
+      ignore_missing: false
+      fail_on_error: false
+
+# Reference https://www.elastic.co/guide/en/beats/filebeat/current/configuring-internal-queue.html
+# queue.mem.events = number of servers * average requests per second per server * scan_frequency(10s). I think 12288 is more reasonable now
+# queue.mem.events = output.worker * output.bulk_max_size
+# queue.mem.flush.min_events = output.bulk_max_size
+queue.mem:
+  events: 12288
+  flush.min_events: 4096
+  flush.timeout: 1s
+
+# Reference https://www.elastic.co/guide/en/beats/filebeat/current/configuration-general-options.html#_registry_flush
+# Reduce the frequency of Filebeat refreshing files to improve performance
+filebeat.registry.flush: 30s
+
+# ILM配置
+# setup.template.settings:
+#   index.number_of_shards: 1
+#   index.number_of_replicas: 0
+# setup.ilm.overwrite: true
+# setup.ilm.policy_file: /usr/share/filebeat/filebeat-lifecycle-policy.json
+
+# Reference https://www.elastic.co/guide/en/beats/filebeat/current/logstash-output.html
+output.elasticsearch:
+  hosts: ${ELASTICSEARCH_HOSTS}
+  username: ${ELASTICS_USERNAME}
+  password: ${ELASTIC_PASSWORD}
+  loadbalance: true
+  ssl.certificate_authorities: ["/usr/share/filebeat/config/certs/ca/ca.crt"]
+  ssl.verification_mode: certificate
+  worker: 3
+  bulk_max_size: 4096
+  compression_level: 3
+
+# monitoring filebeat by Metricbeat
+http.enabled: true
+http.port: 5067
+monitoring.enabled: false
+# es cluster uuid
+monitoring.cluster_uuid: "SPCG2PWsT1aLz9-WMrT-6g"
+http.host: filebeat
+# Reference https://www.elastic.co/guide/en/beats/filebeat/current/configuration-logging.html
+# disable Filebeat logs its internal metrics, because it is already monitored by Metricbeat
+logging.metrics.enabled: false

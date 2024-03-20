@@ -6,6 +6,8 @@ services:
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
     user: "0"
+#    创建HTTPS证书、
+#  设置Kibana密码 https://www.elastic.co/guide/en/elasticsearch/reference/8.12/security-api-change-password.html
     command: >
       bash -c '
         if [ x${ELASTIC_PASSWORD} == x ]; then
@@ -204,11 +206,23 @@ services:
     ports:
       - ${KIBANA_PORT}:5601
     environment:
-      - SERVERNAME=kibana
+      - SERVER_NAME=kibana
+#     环境变量映射配置属性规则：https://www.elastic.co/guide/en/kibana/current/docker.html#environment-variable-config
+#     所有可配置的属性：https://www.elastic.co/guide/en/kibana/current/settings.html
       - ELASTICSEARCH_HOSTS=["https://es01:9200","https://es02:9200","https://es03:9200"]
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+#      使用MetricBeat监控时，禁用Kibana的监控数据收集 https://www.elastic.co/guide/en/kibana/current/monitoring-metricbeat.html
+      - MONITORING_KIBANA_COLLECTION_ENABLED=false
+      - XPACK_FLEET_AGENTS_ENABLED=false
+#      最好设置，不过不设置也没啥问题，只不过日志中会有警告
+#    https://www.elastic.co/guide/en/kibana/current/security-settings-kb.html#security-encrypted-saved-objects-settings 前后相关内容
+#    https://www.elastic.co/guide/en/kibana/current/xpack-security-secure-saved-objects.html
+#    https://www.elastic.co/guide/en/kibana/current/kibana-encryption-keys.html
+#      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=387bc0129527150913edabbf649a4f52
+#      - XPACK_REPORTING_ENCRYPTIONKEY=6892fedb366bda9338ee11372885d14f
+#      - XPACK_SECURITY_ENCRYPTIONKEY=ce9e934d73da48f61b4c6c7dc899190b
     mem_limit: ${MEM_LIMIT}
     healthcheck:
       test:
@@ -219,7 +233,80 @@ services:
       interval: 10s
       timeout: 10s
       retries: 120
-
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${STACK_VERSION}
+    user: root
+    depends_on:
+      es01:
+        condition: service_healthy
+      es02:
+        condition: service_healthy
+      es03:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: /
+        target: /hostfs
+        read_only: true
+      - type: bind
+        source: /proc
+        target: /hostfs/proc
+        read_only: true
+      - type: bind
+        source: /sys/fs/cgroup
+        target: /hostfs/sys/fs/cgroup
+        read_only: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+      - type: volume
+        source: filebeatdata
+        target: /usr/share/filebeat/data
+        read_only: false
+      - type: bind
+        source: ./filebeat.yml
+        target: /usr/share/filebeat/filebeat.yml
+        read_only: true
+      - type: volume
+        source: certs
+        target: /usr/share/filebeat/config/certs
+        read_only: true
+    environment:
+      - ELASTICS_USERNAME=elastic
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTICSEARCH_HOSTS=["https://es01:9200","https://es02:9200","https://es03:9200"]
+    ports:
+      - "5067:5067"
+  metricbeat:
+    depends_on:
+      es01:
+        condition: service_healthy
+      es02:
+        condition: service_healthy
+      es03:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    image: docker.elastic.co/beats/metricbeat:${STACK_VERSION}
+    user: root
+    volumes:
+      - "./metricbeat.yml:/usr/share/metricbeat/metricbeat.yml:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/sys/fs/cgroup:/hostfs/sys/fs/cgroup:ro"
+      - "/proc:/hostfs/proc:ro"
+      - "/:/hostfs:ro"
+      - certs:/usr/share/metricbeat/config/certs
+      - metricbeatdata:/usr/share/metricbeat/data
+    environment:
+#      官方建议使用内置用户remote_monitoring_user
+#  https://www.elastic.co/guide/en/elasticsearch/reference/8.12/built-in-users.html
+      - ELASTICS_USERNAME=elastic
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTICSEARCH_HOSTS=["https://es01:9200","https://es02:9200","https://es03:9200"]
+      - KIBANA_HOST=["http://kibana:5601"]
 volumes:
   certs:
     driver: local
@@ -230,4 +317,8 @@ volumes:
   esdata03:
     driver: local
   kibanadata:
+    driver: local
+  metricbeatdata:
+    driver: local
+  filebeatdata:
     driver: local
